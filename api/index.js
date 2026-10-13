@@ -224,7 +224,7 @@ async function currentWeather(city, timeoutMs) {
     const feels = Number.isFinite(current.apparent_temperature) ? ", ощущается как " + Math.round(current.apparent_temperature) + "°" : "";
     const wind = Number.isFinite(current.wind_speed_10m) ? ", ветер " + Math.round(current.wind_speed_10m) + " км/ч" : "";
     const precipitation = Number(current.precipitation || 0) > 0 ? ", осадки " + Number(current.precipitation).toFixed(1) + " мм" : "";
-    return "Сейчас в " + placeName + ": " + temp + "°, " + weatherDescription(current.weather_code) + feels + wind + precipitation + ".";
+    return "Погода сейчас, " + placeName + ": " + temp + "°, " + weatherDescription(current.weather_code) + feels + wind + precipitation + ".";
   } catch (error) {
     console.warn("Weather request did not finish in time; continuing with search.");
     return "";

@@ -2,8 +2,8 @@ const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 4300;
-const SERPER_TIMEOUT_MS = 1200;
+const TOTAL_RESPONSE_BUDGET_MS = 3600;
+const SERPER_TIMEOUT_MS = 2600;
 const GEMINI_TIMEOUT_MS = 3500;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
@@ -152,6 +152,16 @@ function isSearchIntent(text) {
   return /\b(latest|today|current|news|weather|price|exchange rate|recent|search|look up)\b|сегодня|сейчас|последн|новост|погод|курс валют|найди|поищи|актуальн|сколько стоит|свежие данные/i.test(text);
 }
 
+function searchReply(searchContext) {
+  const firstLine = String(searchContext || "").split("\n")[0]
+    .replace(/^Краткий ответ поисковика:\s*/i, "")
+    .replace(/^\d+\.\s*[^:]{0,180}:\s*/, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return firstLine ? "По данным поиска: " + firstLine : "";
+}
+
 function safeHistory(history) {
   if (!Array.isArray(history)) return [];
   return history
@@ -261,7 +271,7 @@ async function askGemini(text, history, searchContext, timeoutMs) {
 
   if (response.status === 503 && fallbackModel !== model) {
     const elapsedMs = Date.now() - requestStartedAt;
-    const fallbackTimeoutMs = timeoutMs - elapsedMs;
+    const fallbackTimeoutMs = Math.min(900, timeoutMs - elapsedMs);
     if (fallbackTimeoutMs >= 400) {
       console.warn("Gemini returned HTTP 503; trying the fallback model.");
       endpoint = endpointFor(fallbackModel);
@@ -367,9 +377,21 @@ export default async function handler(req, res) {
     }
 
     let searchContext = "";
-    if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      // Search has a very short budget because Alice expects a response within 4.5 seconds.
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2400)));
+    if (isSearchIntent(text)) {
+      if (!process.env.SERPER_API_KEY) {
+        return res.status(200).json(aliceResponse(
+          "Поиск актуальных данных сейчас не настроен. Попробуйте задать обычный вопрос.",
+          false,
+          oldHistory
+        ));
+      }
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 400)));
+      const directSearchAnswer = searchReply(searchContext);
+      return res.status(200).json(aliceResponse(
+        directSearchAnswer || "Не удалось быстро получить актуальные данные. Попробуйте ещё раз чуть позже.",
+        false,
+        oldHistory
+      ));
     }
 
     const answer = await askGemini(

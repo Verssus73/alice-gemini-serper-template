@@ -2,9 +2,9 @@ const DEFAULT_MODEL = "deepseek-chat";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 3600;
+const TOTAL_RESPONSE_BUDGET_MS = 4300;
 const SERPER_TIMEOUT_MS = 2600;
-const DEEPSEEK_TIMEOUT_MS = 3000;
+const DEEPSEEK_TIMEOUT_MS = 3500;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
 
@@ -252,7 +252,7 @@ async function askDeepSeek(text, history, timeoutMs) {
         model,
         messages,
         temperature: 0.3,
-        max_tokens: 100,
+        max_tokens: 60,
         stream: false
       })
     },
@@ -365,7 +365,7 @@ export default async function handler(req, res) {
       text,
       oldHistory,
       searchContext,
-      Math.max(0, Math.min(DEEPSEEK_TIMEOUT_MS, remainingMs() - 300))
+      Math.max(0, Math.min(DEEPSEEK_TIMEOUT_MS, remainingMs() - 400))
     );
 
     const history = [

@@ -200,6 +200,9 @@ async function searchWeb(query, timeoutMs) {
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
 
+    receivedResponseHeaders = true;
+    console.warn("DeepSeek response headers received in", Date.now() - requestStartedAt, "ms");
+
     if (!response.ok) {
       console.warn("Serper request failed with HTTP", response.status);
       return "";
@@ -232,8 +235,11 @@ async function askDeepSeek(text, history, timeoutMs) {
   if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
 
   const controller = new AbortController();
+  const requestStartedAt = Date.now();
+  let receivedResponseHeaders = false;
   const timer = setTimeout(() => controller.abort(), Math.max(500, timeoutMs));
   try {
+    console.warn("DeepSeek request started");
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
@@ -295,6 +301,7 @@ async function askDeepSeek(text, history, timeoutMs) {
       if (done) return answer.trim();
     }
   } finally {
+    console.warn("DeepSeek request finished in", Date.now() - requestStartedAt, "ms; headers received:", receivedResponseHeaders);
     clearTimeout(timer);
     controller.abort();
   }

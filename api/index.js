@@ -4,6 +4,7 @@ const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4300;
 const SERPER_TIMEOUT_MS = 2600;
+const WEATHER_TIMEOUT_MS = 2600;
 const DEEPSEEK_TIMEOUT_MS = 3500;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
@@ -179,6 +180,54 @@ async function fetchJson(url, options, timeoutMs) {
     return { response, data };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function weatherDescription(code) {
+  const labels = {
+    0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
+    45: "туман", 48: "изморозевый туман", 51: "морось", 53: "морось", 55: "сильная морось",
+    61: "небольшой дождь", 63: "дождь", 65: "сильный дождь", 71: "небольшой снег",
+    73: "снег", 75: "сильный снег", 80: "ливень", 81: "ливень", 82: "сильный ливень",
+    95: "гроза", 96: "гроза с градом", 99: "сильная гроза с градом"
+  };
+  return labels[Number(code)] || "без уточнения";
+}
+
+function weatherLocation(body, text) {
+  const entities = Array.isArray(body?.request?.nlu?.entities) ? body.request.nlu.entities : [];
+  const geo = entities.find(item => item?.type === "YANDEX.GEO" && item?.value?.city);
+  if (geo) return String(geo.value.city).trim();
+  const match = String(text || "").match(/(?:погод[ауеы]?\s+(?:в|во)\s+)([^?!,.]+)/i);
+  return match ? match[1].trim() : "";
+}
+
+async function currentWeather(city, timeoutMs) {
+  if (!city || timeoutMs < 500) return "";
+  try {
+    const locationUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" +
+      encodeURIComponent(city) + "&count=1&language=ru&countryCode=RU";
+    const location = await fetchJson(locationUrl, { method: "GET" }, Math.min(1200, timeoutMs));
+    const place = Array.isArray(location.data?.results) ? location.data.results[0] : null;
+    if (!location.response.ok || !place || !Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) return "";
+
+    const remaining = Math.max(500, timeoutMs - 1200);
+    const forecastUrl = "https://api.open-meteo.com/v1/forecast?latitude=" + encodeURIComponent(place.latitude) +
+      "&longitude=" + encodeURIComponent(place.longitude) +
+      "&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&timezone=auto";
+    const forecast = await fetchJson(forecastUrl, { method: "GET" }, remaining);
+    const current = forecast.data?.current;
+    if (!forecast.response.ok || !current || !Number.isFinite(current.temperature_2m)) return "";
+
+    const placeName = String(place.name || city);
+    const temp = Math.round(current.temperature_2m);
+    const feels = Number.isFinite(current.apparent_temperature) ? ", ощущается как " + Math.round(current.apparent_temperature) + "°" : "";
+    const wind = Number.isFinite(current.wind_speed_10m) ? ", ветер " + Math.round(current.wind_speed_10m) + " км/ч" : "";
+    const precipitation = Number(current.precipitation || 0) > 0 ? ", осадки " + Number(current.precipitation).toFixed(1) + " мм" : "";
+    return "Сейчас в " + placeName + ": " + temp + "°, " + weatherDescription(current.weather_code) + feels + wind + precipitation + ".";
+  } catch (error) {
+    console.warn("Weather request did not finish in time; continuing with search.");
+    return "";
   }
 }
 
@@ -386,6 +435,15 @@ export default async function handler(req, res) {
           oldHistory
         ));
       }
+      const city = weatherLocation(body, text);
+      if (city) {
+        const weather = await currentWeather(
+          city,
+          Math.min(WEATHER_TIMEOUT_MS, Math.max(0, remainingMs() - 400))
+        );
+        if (weather) return res.status(200).json(aliceResponse(weather, false, oldHistory));
+      }
+
       searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 400)));
       const directSearchAnswer = searchReply(searchContext);
       return res.status(200).json(aliceResponse(

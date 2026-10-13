@@ -3,9 +3,8 @@ const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4300;
-const SERPER_TIMEOUT_MS = 1000;
+const SERPER_TIMEOUT_MS = 1200;
 const GEMINI_TIMEOUT_MS = 3500;
-const GEMINI_RETRY_MAX_MS = 900;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
 
@@ -220,7 +219,10 @@ async function askGemini(text, history, searchContext, timeoutMs) {
   if (timeoutMs < 250) throw new Error("TIME_BUDGET_EXHAUSTED");
 
   const model = String(process.env.GEMINI_MODEL || DEFAULT_MODEL).trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
+  const fallbackModel = String(process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash-lite").trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(model) || !/^[A-Za-z0-9._-]+$/.test(fallbackModel)) {
+    throw new Error("INVALID_MODEL_NAME");
+  }
 
   const contents = safeHistory(history).map(item => ({
     role: item.role,
@@ -232,7 +234,8 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const endpointFor = name => `https://generativelanguage.googleapis.com/v1beta/models/${name}:generateContent`;
+  let endpoint = endpointFor(model);
   const requestOptions = {
       method: "POST",
       headers: {
@@ -256,12 +259,13 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     Math.min(GEMINI_TIMEOUT_MS, timeoutMs)
   );
 
-  if (response.status === 503) {
+  if (response.status === 503 && fallbackModel !== model) {
     const elapsedMs = Date.now() - requestStartedAt;
-    const retryTimeoutMs = Math.min(GEMINI_RETRY_MAX_MS, timeoutMs - elapsedMs);
-    if (retryTimeoutMs >= 400) {
-      console.warn("Gemini returned HTTP 503; retrying once.");
-      ({ response, data } = await fetchJson(endpoint, requestOptions, retryTimeoutMs));
+    const fallbackTimeoutMs = timeoutMs - elapsedMs;
+    if (fallbackTimeoutMs >= 400) {
+      console.warn("Gemini returned HTTP 503; trying the fallback model.");
+      endpoint = endpointFor(fallbackModel);
+      ({ response, data } = await fetchJson(endpoint, requestOptions, fallbackTimeoutMs));
     }
   }
 
@@ -365,7 +369,7 @@ export default async function handler(req, res) {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
       // Search has a very short budget because Alice expects a response within 4.5 seconds.
-      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 3000)));
+      searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2400)));
     }
 
     const answer = await askGemini(

@@ -226,23 +226,15 @@ async function searchWeb(query, timeoutMs) {
 async function askDeepSeek(text, history, timeoutMs) {
   const key = process.env.DEEPSEEK_API_KEY;
   if (!key) throw new Error("MISSING_DEEPSEEK_KEY");
-  if (timeoutMs < 250) throw new Error("TIME_BUDGET_EXHAUSTED");
+  if (timeoutMs < 500) throw new Error("TIME_BUDGET_EXHAUSTED");
 
   const model = String(process.env.DEEPSEEK_MODEL || "deepseek-chat").trim();
   if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
 
-  const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...safeHistory(history).map(item => ({
-      role: item.role === "model" ? "assistant" : "user",
-      content: item.text
-    })),
-    { role: "user", content: text }
-  ];
-
-  const { response, data } = await fetchJson(
-    "https://api.deepseek.com/chat/completions",
-    {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(500, timeoutMs));
+  try {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -250,28 +242,63 @@ async function askDeepSeek(text, history, timeoutMs) {
       },
       body: JSON.stringify({
         model,
-        messages,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...safeHistory(history).map(item => ({
+            role: item.role === "model" ? "assistant" : "user",
+            content: item.text
+          })),
+          { role: "user", content: text }
+        ],
         temperature: 0.3,
         max_tokens: 60,
-        stream: false
-      })
-    },
-    Math.min(3000, timeoutMs)
-  );
+        stream: true
+      }),
+      signal: controller.signal
+    });
 
-  if (!response.ok) {
-    const status = Number(response.status);
-    console.error("DeepSeek request failed with HTTP", status);
-    if (status === 401 || status === 403) throw new Error("DEEPSEEK_KEY_REJECTED");
-    if (status === 429) throw new Error("DEEPSEEK_QUOTA");
-    throw new Error("DEEPSEEK_REQUEST_FAILED");
+    if (!response.ok) {
+      const status = Number(response.status);
+      console.error("DeepSeek request failed with HTTP", status);
+      if (status === 401 || status === 403) throw new Error("DEEPSEEK_KEY_REJECTED");
+      if (status === 429) throw new Error("DEEPSEEK_QUOTA");
+      throw new Error("DEEPSEEK_REQUEST_FAILED");
+    }
+
+    if (!response.body) throw new Error("DEEPSEEK_EMPTY_RESPONSE");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let answer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") return answer.trim();
+        try {
+          const delta = String(JSON.parse(payload)?.choices?.[0]?.delta?.content || "");
+          answer += delta;
+          if (answer.length >= 16 && /[.!?…]\s*$/.test(answer)) {
+            await reader.cancel();
+            return answer.trim();
+          }
+        } catch {
+          // Skip a malformed streaming event and continue reading.
+        }
+      }
+      if (done) return answer.trim();
+    }
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
   }
-
-  const answer = String(data?.choices?.[0]?.message?.content || "").trim();
-  if (!answer) throw new Error("DEEPSEEK_EMPTY_RESPONSE");
-  return answer;
 }
-
 function errorForUser(error) {
   switch (error?.message) {
     case "MISSING_DEEPSEEK_KEY":

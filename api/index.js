@@ -266,12 +266,12 @@ async function askGemini(text, history, searchContext, timeoutMs) {
   let { response, data } = await fetchJson(
     endpoint,
     requestOptions,
-    Math.min(GEMINI_TIMEOUT_MS, timeoutMs)
+    Math.min(GEMINI_TIMEOUT_MS, timeoutMs, 2300)
   );
 
-  if (response.status === 503 && fallbackModel !== model) {
+  if (response.status === 503) {
     const elapsedMs = Date.now() - requestStartedAt;
-    const fallbackTimeoutMs = Math.min(900, timeoutMs - elapsedMs);
+    const fallbackTimeoutMs = Math.min(1000, timeoutMs - elapsedMs);
     if (fallbackTimeoutMs >= 400) {
       console.warn("Gemini returned HTTP 503; trying the fallback model.");
       endpoint = endpointFor(fallbackModel);

@@ -5,6 +5,8 @@ const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4300;
 const SERPER_TIMEOUT_MS = 600;
 const GEMINI_TIMEOUT_MS = 3500;
+const SUPABASE_TIMEOUT_MS = 450;
+const MAX_PERSISTED_HISTORY_MESSAGES = 8;
 
 const SYSTEM_PROMPT = [
   "Ты — Смарт Войс — голосовой помощник на базе Gemini в навыке Яндекс Алисы.",
@@ -25,6 +27,93 @@ function aliceResponse(text, endSession = false, history = []) {
     },
     session_state: { history }
   };
+}
+
+function memoryConversationId(body) {
+  const session = body?.session || {};
+  const skillId = String(session.skill_id || "").trim();
+  const userId = String(session?.user?.user_id || session?.application?.application_id || "").trim();
+  if (!skillId || !userId) return "";
+  return (skillId + ":" + userId).slice(0, 500);
+}
+
+function isForgetCommand(text) {
+  return /^забудь\s+(?:всё|все)\s*[.!?]*$/i.test(String(text || "").trim());
+}
+
+function supabaseConfig() {
+  const url = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
+  const key = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  return url && key ? { url, key } : null;
+}
+
+async function supabaseRequest(path, options, timeoutMs) {
+  const config = supabaseConfig();
+  if (!config || timeoutMs < 100) return null;
+  return fetchJson(config.url + "/rest/v1/" + path, {
+    ...options,
+    headers: {
+      apikey: config.key,
+      Authorization: "Bearer " + config.key,
+      ...(options.headers || {})
+    }
+  }, Math.min(SUPABASE_TIMEOUT_MS, timeoutMs));
+}
+
+async function loadPersistentHistory(conversationId, fallback, timeoutMs) {
+  if (!conversationId) return fallback;
+  try {
+    const result = await supabaseRequest(
+      "alice_memory?conversation_id=eq." + encodeURIComponent(conversationId) + "&select=history",
+      { method: "GET" },
+      timeoutMs
+    );
+    if (!result?.response?.ok) return fallback;
+    const row = Array.isArray(result.data) ? result.data[0] : null;
+    return row ? safeHistory(row.history).slice(-MAX_PERSISTED_HISTORY_MESSAGES) : fallback;
+  } catch (error) {
+    console.warn("Supabase memory read skipped:", error?.message || "unknown error");
+    return fallback;
+  }
+}
+
+async function savePersistentHistory(conversationId, history, timeoutMs) {
+  if (!conversationId) return;
+  try {
+    const result = await supabaseRequest(
+      "alice_memory?on_conflict=conversation_id",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates,return=minimal"
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          history: safeHistory(history).slice(-MAX_PERSISTED_HISTORY_MESSAGES),
+          updated_at: new Date().toISOString()
+        })
+      },
+      timeoutMs
+    );
+    if (result && !result.response.ok) console.warn("Supabase memory write failed with HTTP", result.response.status);
+  } catch (error) {
+    console.warn("Supabase memory write skipped:", error?.message || "unknown error");
+  }
+}
+
+async function clearPersistentHistory(conversationId, timeoutMs) {
+  if (!conversationId) return;
+  try {
+    const result = await supabaseRequest(
+      "alice_memory?conversation_id=eq." + encodeURIComponent(conversationId),
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
+      timeoutMs
+    );
+    if (result && !result.response.ok) console.warn("Supabase memory delete failed with HTTP", result.response.status);
+  } catch (error) {
+    console.warn("Supabase memory delete skipped:", error?.message || "unknown error");
+  }
 }
 
 function fitAliceText(value) {
@@ -210,7 +299,9 @@ export default async function handler(req, res) {
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
-  const oldHistory = safeHistory(body?.state?.session?.history);
+  const sessionHistory = safeHistory(body?.state?.session?.history);
+  const conversationId = memoryConversationId(body);
+  let oldHistory = sessionHistory;
 
   if (!text) {
     return res.status(200).json(aliceResponse(
@@ -221,6 +312,21 @@ export default async function handler(req, res) {
   }
 
   try {
+    oldHistory = await loadPersistentHistory(
+      conversationId,
+      sessionHistory,
+      Math.min(SUPABASE_TIMEOUT_MS, Math.max(0, remainingMs() - 3500))
+    );
+
+    if (isForgetCommand(text)) {
+      await clearPersistentHistory(conversationId, Math.max(0, remainingMs() - 300));
+      return res.status(200).json(aliceResponse(
+        "Хорошо, я забыл историю этого разговора.",
+        false,
+        []
+      ));
+    }
+
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
       // Search has a very short budget because Alice expects a response within 4.5 seconds.
@@ -240,6 +346,7 @@ export default async function handler(req, res) {
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
 
+    await savePersistentHistory(conversationId, history, Math.max(0, remainingMs() - 250));
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
     const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;

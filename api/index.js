@@ -4,7 +4,8 @@ const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 4300;
 const SERPER_TIMEOUT_MS = 600;
-const GEMINI_TIMEOUT_MS = 3500;
+const GEMINI_TIMEOUT_MS = 3900;
+const GEMINI_RETRY_MAX_MS = 900;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
 
@@ -219,9 +220,8 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
 
-  const { response, data } = await fetchJson(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const requestOptions = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -232,12 +232,25 @@ async function askGemini(text, history, searchContext, timeoutMs) {
         contents,
         generationConfig: {
           temperature: 0.5,
-          maxOutputTokens: 240
+          maxOutputTokens: 160
         }
       })
-    },
+    };
+  const requestStartedAt = Date.now();
+  let { response, data } = await fetchJson(
+    endpoint,
+    requestOptions,
     Math.min(GEMINI_TIMEOUT_MS, timeoutMs)
   );
+
+  if (response.status === 503) {
+    const elapsedMs = Date.now() - requestStartedAt;
+    const retryTimeoutMs = Math.min(GEMINI_RETRY_MAX_MS, timeoutMs - elapsedMs);
+    if (retryTimeoutMs >= 400) {
+      console.warn("Gemini returned HTTP 503; retrying once.");
+      ({ response, data } = await fetchJson(endpoint, requestOptions, retryTimeoutMs));
+    }
+  }
 
   if (!response.ok) {
     const status = Number(response.status);
@@ -337,7 +350,7 @@ export default async function handler(req, res) {
       text,
       oldHistory,
       searchContext,
-      Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - 600))
+      Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - 300))
     );
 
     const history = [

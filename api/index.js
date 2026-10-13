@@ -2,9 +2,9 @@ const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 8500;
+const TOTAL_RESPONSE_BUDGET_MS = 4300;
 const SERPER_TIMEOUT_MS = 600;
-const GEMINI_TIMEOUT_MS = 7800;
+const GEMINI_TIMEOUT_MS = 3500;
 const GEMINI_RETRY_MAX_MS = 900;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
@@ -40,6 +40,18 @@ function memoryConversationId(body) {
 
 function isForgetCommand(text) {
   return /^забудь\s+(?:всё|все)\s*[.!?]*$/i.test(String(text || "").trim());
+}
+
+
+function instantReply(text) {
+  const normalized = String(text || "").toLowerCase().replace(/[!?.,]/g, "").trim();
+  if (/^(кто ты|ты кто|представься)$/.test(normalized)) {
+    return "Я Еся, голосовой помощник на базе Gemini.";
+  }
+  if (/^(какая у тебя модель|какая модель|на какой модели ты работаешь)$/.test(normalized)) {
+    return "Я работаю на Gemini 3.5 Flash Lite.";
+  }
+  return "";
 }
 
 function supabaseConfig() {
@@ -315,6 +327,11 @@ export default async function handler(req, res) {
   const sessionHistory = safeHistory(body?.state?.session?.history);
   const conversationId = memoryConversationId(body);
   let oldHistory = sessionHistory;
+
+  const localAnswer = instantReply(text);
+  if (localAnswer) {
+    return res.status(200).json(aliceResponse(localAnswer, false, oldHistory));
+  }
 
   if (!text) {
     return res.status(200).json(aliceResponse(

@@ -243,8 +243,9 @@ async function askGemini(text, history, searchContext, timeoutMs) {
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         contents,
         generationConfig: {
-          temperature: 0.5,
-          maxOutputTokens: 160
+          temperature: 0.3,
+          maxOutputTokens: 80,
+          thinkingConfig: { thinkingLevel: "minimal" }
         }
       })
     };
@@ -342,11 +343,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    oldHistory = await loadPersistentHistory(
-      conversationId,
-      sessionHistory,
-      Math.min(SUPABASE_TIMEOUT_MS, Math.max(0, remainingMs() - 3500))
-    );
+    // Яндекс уже передаёт историю в рамках текущей сессии. Не ждём базу
+    // повторно: это оставляет Gemini больше времени на ответ.
+    if (!sessionHistory.length) {
+      oldHistory = await loadPersistentHistory(
+        conversationId,
+        sessionHistory,
+        Math.min(SUPABASE_TIMEOUT_MS, Math.max(0, remainingMs() - 3500))
+      );
+    }
 
     if (isForgetCommand(text)) {
       await clearPersistentHistory(conversationId, Math.max(0, remainingMs() - 300));

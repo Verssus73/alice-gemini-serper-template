@@ -398,7 +398,6 @@ export default async function handler(req, res) {
     const answer = await askDeepSeek(
       text,
       oldHistory,
-      searchContext,
       Math.max(0, Math.min(DEEPSEEK_TIMEOUT_MS, remainingMs() - 400))
     );
 

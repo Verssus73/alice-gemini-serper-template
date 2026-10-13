@@ -186,6 +186,7 @@ async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
 
+  const requestStartedAt = Date.now();
   try {
     const { response, data } = await fetchJson(
       "https://google.serper.dev/search",
@@ -200,8 +201,7 @@ async function searchWeb(query, timeoutMs) {
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
 
-    receivedResponseHeaders = true;
-    console.warn("DeepSeek response headers received in", Date.now() - requestStartedAt, "ms");
+    console.warn("Serper response received in", Date.now() - requestStartedAt, "ms");
 
     if (!response.ok) {
       console.warn("Serper request failed with HTTP", response.status);

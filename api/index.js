@@ -2,9 +2,9 @@ const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 4300;
+const TOTAL_RESPONSE_BUDGET_MS = 8500;
 const SERPER_TIMEOUT_MS = 600;
-const GEMINI_TIMEOUT_MS = 3900;
+const GEMINI_TIMEOUT_MS = 7800;
 const GEMINI_RETRY_MAX_MS = 900;
 const SUPABASE_TIMEOUT_MS = 450;
 const MAX_PERSISTED_HISTORY_MESSAGES = 8;
@@ -362,7 +362,9 @@ export default async function handler(req, res) {
     await savePersistentHistory(conversationId, history, Math.max(0, remainingMs() - 250));
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
-    const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
+    const safeError = error?.name === "AbortError" || error?.message === "AbortError" || error?.message === "This operation was aborted"
+      ? new Error("TIME_BUDGET_EXHAUSTED")
+      : error;
     console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
     return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
   }

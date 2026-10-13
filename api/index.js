@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
 const MAX_ALICE_TEXT = 1024;
@@ -11,7 +11,7 @@ const MAX_PERSISTED_HISTORY_MESSAGES = 8;
 const SYSTEM_PROMPT = [
   "Ты — Еся — голосовой помощник на базе Gemini в навыке Яндекс Алисы.",
   "Когда спрашивают, кто ты, отвечай: «Я Еся, голосовой помощник на базе Gemini». Не называй себя Алисой: Алиса — платформа, через которую пользователь с тобой разговаривает.",
-  "Если спрашивают, какая у тебя модель, отвечай: «Я работаю на Gemini 2.5 Flash Lite».",
+  "Если спрашивают, какая у тебя модель, отвечай: «Я работаю на Gemini 3.5 Flash Lite».",
   "Отвечай естественно, по-русски, кратко и так, чтобы ответ было удобно слушать.",
   "Обычно используй 1–3 коротких предложения. Не используй Markdown, таблицы, списки с символами или длинные вступления.",
   "Если вопрос требует актуальных данных и переданы результаты поиска, опирайся на них; не выдумывай отсутствующие факты.",
@@ -48,7 +48,7 @@ function instantReply(text) {
     return "Я Еся, голосовой помощник на базе Gemini.";
   }
   if (/^(какая у тебя модель|какая модель|на какой модели ты работаешь)$/.test(normalized)) {
-    return "Я работаю на Gemini 2.5 Flash Lite.";
+    return "Я работаю на Gemini 3.5 Flash Lite.";
   }
   return "";
 }
@@ -229,7 +229,7 @@ async function askGemini(text, history, searchContext, timeoutMs) {
   if (timeoutMs < 250) throw new Error("TIME_BUDGET_EXHAUSTED");
 
   const model = String(process.env.GEMINI_MODEL || DEFAULT_MODEL).trim();
-  const fallbackModel = String(process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash-lite").trim();
+  const fallbackModel = String(process.env.GEMINI_FALLBACK_MODEL || "gemini-3.5-flash-lite").trim();
   if (!/^[A-Za-z0-9._-]+$/.test(model) || !/^[A-Za-z0-9._-]+$/.test(fallbackModel)) {
     throw new Error("INVALID_MODEL_NAME");
   }
